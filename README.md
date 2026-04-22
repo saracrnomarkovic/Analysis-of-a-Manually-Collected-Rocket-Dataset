@@ -1,10 +1,12 @@
 # 🚀 Rocket Dataset Analysis
 
+## 🌐 Live Report
+👉 https://saracrnomarkovic.github.io/Analysis-of-a-Manually-Collected-Rocket-Dataset/
 ## 📌 Project Overview
 This project analyzes a manually collected dataset of rockets and explores the relationship between their characteristics and maximum range.
 
 ## 📂 Files
-- SS3SeminarskiFinal.html – complete analysis report with explanations and visualizations
+- index.html – complete analysis report with explanations and visualizations
 - SS3SeminarskiFinal.Rmd – RMarkdown file with code and explanations
 - rakete.ods – dataset used in the analysis
 
