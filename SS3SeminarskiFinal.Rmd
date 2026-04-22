@@ -1,0 +1,1016 @@
+---
+title: "Seminarski rad, Statistički softver 3"
+author: "Sara Crnomarković"
+date: "školska 2024/25."
+output: 
+  prettydoc::html_pretty:
+    toc: true
+    theme: cayman
+    css: style.css
+---
+
+<br>
+<br>
+
+## **Uvod**
+
+U ovom seminarskom radu istražujemo razvoj i karakteristike balističkih raketa kroz analizu podataka prikupljenih iz ruskih i kineskih sistema naoružanja. <br>
+
+Pri rešavanju zadatih problema, koristićemo podatke iz dosutpnog fajla rakete.ods. U zadatoj bazi podataka imamo sledeća obeležja raketa (čije je značenje jasno po samom nazivu):
+
+* **rusko ime** - nepravo kategoričko nominalno (tekstualni podatak)
+* **NATO ime** - kategoričko nominalno (tekstualni podatak)
+* **masa (u kilogramima)** - numeričko kontinuirano
+* **dužina (u metrima)** - numeričko kontinuirano
+* **kalibar (u metrima)** - numeričko kontinuirano
+* **broj podglava** - numeričko diskretno
+* **payload (korisni teret, u kilogramima)** - numeričko kontinuirano
+* **tip goriva** - kategoričko nominalno
+* **maksimalan domet** - numeričko kontinuirano
+* **način lansiranja** - kategoričko nominalno
+* **broj faza motora** - numeričko diskretno
+* **klasa po dometu** - kategoričko ordinalno
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> rusko ime koristimo samo kao klasičan tekstualni podatak pa nam ovo nije pravo kategoričko obeležje (u teoriji jeste, ali u praksi ga ne koristimo praveći bilo kakve klase rakete), dok je NATO ime kodno te preko njega možemo podeliti rakete na ruske i kineske (prefiks SS- za ruske, a CSS- za kineske, **biće detaljno objašnjeno u 6. zadatku**) pa stoga možemo reći da je u pitanju kategoričko obeležje koje pored navedenog značaja koristimo kao i rusko tj. kao klasičan tekstualni podatak <br>
+
+
+Zadate podatke koristićemo u cilju analiziranja kako pomenuta obeležja utiču jedna na druga, da li to ima ikakve veze sa zemljom porekla raketa ili pak njihovom starošću, da li možemo da uočimo nekakve značajne pravilnosti u podacima, podelimo ih ili predvidimo. Naš pristup će biti matematički u prvih 5 zadataka, dok ćemo se u 6. zadatku orijentisati na istorijski i politički pristup zadatoj bazi.
+
+<br>
+
+## **Prvi zadatak** (učitavanje podataka)
+
+Naš prvi zadatak je zapravo priprema podataka, tačnije učitavanje istih u .ods formatu, te pretvaranje u data.frame. <br>
+
+Koristićemo paket *"readODS"* da ih učitamo, i funkciju *"read_ods"* iz tog paketa da ih pretvorimo u data.frame.<br>
+
+Dajemo i primer naših podataka u obliku tabele prvih 5 opservacija. <br>
+
+
+```{r, warning = FALSE}
+#install.packages("readODS")
+library(readODS)
+library(knitr)
+
+rakete_pocetna_baza = read_ods("C:\\Users\\sarac\\Downloads\\rakete.ods", 
+                               range = NULL, col_names = TRUE)
+
+attach(rakete_pocetna_baza)
+kable(head(rakete_pocetna_baza, n = 5), 
+      format = "html", 
+      table.attr = "style='font-size: 12px; width: 70%'"
+)
+```
+
+<br>
+<br>
+
+## Priprema podataka za ostale zadatke
+
+Za dalji rad (uključivaće pravljenje statističkih modela, razne podele podataka i funkcije primenjivane nad njima) biće nam potrebni unapred spremljeni podaci što podrazumeva:
+
+* izbacujemo nerelevantna obeležja, u našem slučaju nazive raketa (rusko_ime i NATO_ime), koja nećemo koristiti pri matematički orijentisanom rešavanju problema u prvih 5 zadataka, ali svakako čuvamo početnu bazu sa svim podacima jer će nam biti potrebni pri istorijskoj analizi u 6. zadatku
+* skaliramo numerička obeležja za slučaj da će biti potreno da pravimo neki model čije su performanse bolje nad skaliranim podacima (nije uvek neophodan korak, ali svakako nije na odmet)
+* pretvaramo sva preostala kategorička obeležja u numerička, radi lakšeg rada sa podacima 
+
+
+```{r}
+rakete = rakete_pocetna_baza[, -c(1, 2)]
+
+numerical_col = sapply(rakete, is.numeric)
+rakete[numerical_col] = scale(rakete[numerical_col])
+
+tip_goriva = factor(tip_goriva, levels = c("Cvrsto", "Tecno"), labels = c(1,2))
+nacin_lansiranja = factor(nacin_lansiranja, levels = c("RM TEL", "Silos", "Mornaricki", "Avion"), labels = c(1,2,3,4))
+klasa_po_dometu = factor (klasa_po_dometu, levels = c("S", "M", "L"), labels = c(1,2,3))
+
+rakete$tip_goriva = as.numeric(tip_goriva)
+rakete$nacin_lansiranja = as.numeric(nacin_lansiranja)
+rakete$klasa_po_dometu = as.numeric(klasa_po_dometu)
+```
+
+<br>
+
+Pogledajmo kako sada izgleda naša baza na primeru prvih 5 opservacija. 
+
+
+```{r}
+kable(head(rakete, n = 5), 
+      format = "html", 
+      table.attr = "style='font-size: 12px; width: 70%'"
+)
+```
+
+<br>
+
+## **Drugi zadatak** (popunjavanje NA vrednosti)
+
+U drugom zadatku cilj nam je popuniti NA vrednosti. Prvo pogledajmo koja obeležja ih imaju i koliko ih je, kako bi se odlučili za najsmilseniji način popunjavanja istih.
+
+
+```{r}
+kable(colSums(is.na(rakete)), 
+      format = "html",
+      table.attr = "style='font-size: 15px; width: 70%'")
+```
+
+<br>
+
+Vidimo da NA vrednosti nema puno tj. postoji samo po jedna za obeležja masa_kg, duzina_m, broj_podglava. <br>
+
+Ako pogledamo sve varijable koje imamo, intuitivno nam deluje kao da su sve zavisne u manjoj ili većoj meri. Stoga ćemo ove vrednosti popuniti na sledeći način: koristićemo funkciju *"mice"* iz paketa *"mice"* koja popunjava ove vrednosti koristeći veze sa ostalim dostupnim poljima svih varijabli i na taj način nam omogućava realistično popunjavanje NA vrednosti. <br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> sva obeležja koja sadrže NA vrednosti su numerička i već skalirana u pripremi podataka, ali nam ovo neće praviti problem pri imputaciji, samo je važno napomenuti da ni rezultati neće biti u stvarnom opsegu vrednosti. <br>
+
+
+* koristićemo se metodom PMM (Predicted Mean Matching) koja je dobra i najčešće korišćena za imputaciju numeričkih obeležja, ona unosi najbližu stvarnu vrednost predviđenoj za nedostajuće polje
+* biramo prvu imputaciju (iako smo generisali 5 različitih setova imputacije postavljanjem m = 5), prosleđivanjem argumenta 1 funkciji "complete", što je obično dovoljno dobro i reprezentativno
+* prethodno ne znači da treba generisati jednu imputaciju samo jer jednu trenutno koristimo, jer bi to bilo kao da pretpostavljamo da postoji tačno jedan ispravan način za popunjavanje NA vrednosti, što nije dobro 
+
+
+```{r, warning = FALSE, message = FALSE, results = FALSE}
+#install.packages("mice")
+library(mice)
+
+imputacija = mice(rakete, m = 5, method = 'pmm', seed = 500)
+rakete = complete(imputacija, 1) # biramo prvu imputaciju
+```
+
+<br>
+
+## **Treći zadatak** (procena max dometa)
+
+U trećem zadatku želimo da predvidimo maksimalan domet rakete (dakle to će biti naša ciljna promenljiva) na osnovu drugih prediktora, modelom po izboru. Nama su poznate vrednosti obeležja max_domet, ali praivćemo se da ih ne znamo, predvidićemo ih, a onda naše predviđene vrednosti uporediti sa stvarnim da bi videli da li smo uradili dobar posao.
+
+<br>
+
+### Podela podataka
+
+U procesu formiranja modela možemo koristiti sledeće skupove za podelu podataka:
+
+**1. Trening skup** (na njemu se model "uči") <br>
+**2. Validacioni skup** (međukorak za procenu performansi modela na neviđenim podacima i podešavanje hiperparametara modela, nije uvek neophodan) <br>
+**3. Test skup** (završna evaluacija tj. procena performansi modela na neviđenim podacima)<br>
+
+<img src="https://ds100.org/course-notes-su23/cv_regularization/images/val.png" alt="Vizuelizacija podele podataka" width="500"/>
+
+<br>
+
+Za pouzdaniju procenu performansi modela, umesto posebnog validacionog skupa može se koristiti **kros-validacija (unakrsna validacija)**. Unakrsna validacija sa k grupa podrazumeva sledeće korake:
+
+1. Podaci se dele na k foldova
+2. Za svaki od k koraka, jedan fold se koristi kao test skup, a preostalih k-1 kao trening skup
+3. Prosečna performansa modela na k test skupova daje konačnu ocenu perfromansi (dakle ovime smo evaluirali naš model)
+
+<img src="https://www.sharpsightlabs.com/wp-content/uploads/2024/02/cross-validation-explained_FEATURED-IMAGE.png" width="500"/>
+
+U ovom zadatku podatke ćemo deliti samo na trening i test skup (bez validacionog). Razlog za ovo je jednostavan pristup problemu, nemamo puno podataka a modeli koje planiramo da koristimo (SVM i linearna regresija) su dovoljno jednostavni modeli da nam optimizacija hiperparametara (koje SVM ima) nije neophodna. <br>
+
+Kako je baza mala, nećemo rizikovati potpuno nasumičnom podelom, već ćemo koristiti funkciju *"createDataPartition"* iz paketa *"caret"*. Ona podelu vrši nasumično ali obezbeđuje da se zadrži približno ista distribucija ciljne promenljive u oba skupa.
+
+```{r, warning = FALSE, message = FALSE, results = FALSE}
+library(caret)
+
+set.seed(123)
+train_indexes = createDataPartition(rakete$max_domet_km, p = 0.7, list = F) 
+train_set = rakete[train_indexes, ]
+test_set = rakete[-train_indexes, ]
+```
+
+
+Sada kada imamo podelu na trening i test skup možemo se odlučiti za prvi model koji ćemo isprobati.
+
+<br>
+
+### Linearna regresija
+
+Prvo koristimo tradicionalni model linearne regresije, kao najjednostavniji pristup. On je često, pa tako i sada, prvi intuitivni izbor, kada su očigledne direktne (i po našoj proceni linearne) veze među obeležjima (npr. u našem slučaju max_domet_km ima jasnu direktnu vezu sa masom, dužinom itd.).
+
+<br>
+
+<img src="https://media.licdn.com/dms/image/v2/D4E12AQE_M1Rr93z9wg/article-cover_image-shrink_720_1280/article-cover_image-shrink_720_1280/0/1709001657878?e=2147483647&v=beta&t=GByFf25YC_U-V1Kdm1SqriEtNrnH4tFlzwz52wKmrOw" alt="Vizuelizacija lm modela" width="500"/>
+
+<br>
+
+Sada nam je cilj da proverimo koliko je svaki od prediktora značajan za naš model i predviđanje ciljne promenljive max_domet. Proveru ćemo uraditi pregledom p-vrednosti za svaki od prediktora na trening skupu, jer p-vrednosti na test skupu nisu relevantne za treniranje modela niti za procenu značaja, a test skup zadržavamo kao potpuno neviđeni za validaciju performansi modela.
+
+```{r, warning = FALSE, message = FALSE}
+summary (lm(max_domet_km ~., data = train_set))
+
+library(car)
+vif(lm(max_domet_km ~., data = train_set))
+```
+
+Vidimo da su p-vrednosti većine prediktora visoke, osim za tip_goriva i klasa_po_dometu, što bi moglo sugerisati da su ostali prediktori manje značajni. <br>
+
+Međutim, s obzirom na to da smo uvideli jaku korelisanost među prediktorima (multikolinearnost) koristeći funkciju *"vif"* i uočavajući njene pretežno visoke vrednosti, zaključujemo da visoke p-vrednosti mogu biti rezultat te međusobne povezanosti. Model tada teško razlikuje doprinos pojedinačnih prediktora, što može „prigušiti“ njihove statističke značajnosti.
+
+
+Zbog toga ćemo se voditi intuicijom, smatrajući da svaki od prediktora može imati, manji ili veći, značaj za predviđanje max_domet, te ćemo ih sve zadržati u modelu. Ovakav pristup ne bi trebalo da mnogo naškodi našem modelu te nećemo rizikovati izbacivanjem prediktora.
+
+
+```{r}
+lm_model = lm(max_domet_km ~., data = train_set)
+lm_predictions = predict(lm_model, newdata = test_set)
+lm_predictions
+```
+
+Vidimo da smo zaista dobili predikcije maksimalnog dometa za 15 raketa koje se nalaze u test skupu. Pre nego što se upustimo u razmatranje koliko su ove predikcije zaista dobre, pokušajmo da uradimo isto drugim, nešto kompleksnijim modelom: Random Forest
+
+<br>
+
+### Random Forest
+
+Naš drugi pristup biće Random Forest. On je skup velikog broja stabala odlučivanja (decision trees) koje zajedno donose konacnu odluku. <br>
+Biramo ga jer je jak model koji može da uhvati složenije odnose, a ipak nije komplikovan i ne zahteva nužno korišćenje validacionog skupa.
+
+<img src="https://www.spotfire.com/content/dam/spotfire/images/graphics/inforgraphics/random-forest-diagram.svg" alt="Vizuelizacija RF modela" width="500"/>
+
+<br>
+
+
+```{r, warning = FALSE, message = FALSE}
+library(randomForest)
+
+rf_model = randomForest(max_domet_km ~ ., data = train_set, ntree = 100)
+rf_predictions = predict(rf_model, newdata = test_set)
+rf_predictions
+```
+<br>
+
+### Poređenje modela
+
+Sada kada imamo dva različita modela koja imaju isti cilj možemo ih uporediti nekim od metrika koje se često koriste za procenu i upoređivanje modela (MSE, MAE, RMSE, $R^2$). Bolji je onaj model koji ima manju grešku i/ili veći koeficijent determinacije. 
+
+
+```{r}
+rmse_rf = sqrt(mean((test_set$max_domet_km - rf_predictions)^2))
+rmse_lm = sqrt(mean((test_set$max_domet_km - lm_predictions)^2))
+
+print(c(rmse_rf, rmse_lm))
+```
+
+<br>
+
+```{r}
+mae_rf = mean(abs(rf_predictions - test_set$max_domet_km))
+mae_lm = mean(abs(lm_predictions - test_set$max_domet_km))
+
+print(c(mae_rf, mae_lm))
+```
+
+<br>
+
+```{r}
+mae_rf = mean(abs(test_set$max_domet_km - rf_predictions))
+mae_lm = mean(abs(test_set$max_domet_km - lm_predictions))
+
+print(c(mae_rf, mae_lm))
+```
+
+<br>
+
+```{r}
+r2_rf = cor(test_set$max_domet_km, rf_predictions)^2
+r2_lm = cor(test_set$max_domet_km, lm_predictions)^2
+
+print(c(r2_rf, r2_lm))
+```
+
+Nešto bolji je Random Forest model, mada su  oba sličnih i ujedno dovoljno dobrih performansi.<br>
+
+Intuitivno ne uočavamo mnogo nelinearnih odnosa u podacima, pa je zato linearna regresija bila dobar izbor koji je imao i solidne performanse, jer je upravo za ovakve slučajeve i dizajnirana. Zato Random Forest nema izraženu prednost (mada ona postoji) nad linearnom regresijom. Tako je sasvim očekivano da su rezultati slični, a da je Random Forest eventualno malo bolji zbog svoje fleksibilnosti. 
+<br>
+
+Ove modele možemo predstaviti i grafički. Očekujemo isti zaključak.
+
+
+```{r}
+par(mfrow = c(1, 2))
+
+plot(test_set$max_domet_km, rf_predictions, main = "RF: Stvarne vs Predviđene", 
+     xlab = "Stvarne vrednosti", ylab = "Predviđene vrednosti", col = "blue")
+abline(0, 1, col = "red")
+
+plot(test_set$max_domet_km, lm_predictions, main = "LM: Stvarne vs Predviđene", 
+     xlab = "Stvarne vrednosti", ylab = "Predviđene vrednosti", col = "darkgreen")
+abline(0, 1, col = "red")
+```
+
+<br>
+<br>
+
+## **Četvrti zadatak** (klasifikator pokretnosti lansera)
+
+U četvrtom zadatku naš cilj je, za početak, napraviti klasifikator (model kojim se podaci svrstavaju u jednu od kategorija) koji pogađa da li raketa ima pokretan ili fiksan lanser.<br>
+
+Nakon toga treba da uočimo overfitting ukoliko je do njega došlo i u tom slučaju modifikujemo naš model. <br>
+
+Naše obeležje način_lansiranja uzima 4 vrednosti:
+
+* Silos - podzemni objekti za skladištenje i lansiranje raketa (FIKSAN)
+* RM TEL - mobilna platforma (vozilo) za transport i lansiranje raketa (POKRETAN)
+* Avion - lanseri montirani na vojne avion, služe za lansiranje iz vazduha (POKRETAN)
+* Mornarički - lanseri na ratnim brodovima ili podmornicama (FIKSAN i POKRETAN)
+
+Mornarički tip lansera može biti i fiksan i pokretan u zavisnosti od toga da li se koristi u cilju lansiranja rakete sa broda/podmornice u pokretu, ili samo kako bi se došlo do udaljene, nekopnene tačke za stacionarno lansiranje. Kako bi olakšali dalji radi, opredelimo se za jedan, npr. fiksan tip mornaričkog lansera.
+
+|               | Pokretan      | Fiksan        |
+|---------------|---------------|---------------|
+| Silos         |               | X             |
+| RM TEL        | X             |               |
+| Avion         | X             |               |
+| Mornarički    |               | X             |
+
+<br>
+
+Klasifikacija može biti višeklasna ili binarna. Stoga postoje dva pristupa našem problemu:
+
+* radićemo sa trenutim podacima (4 klase kategoričke, ciljne promenljive: način_lansiranja), pogađati koji od ova 4 načina lansiranja raketa ima, a onda takve predikcije dodeljivati pokretnim/fiksnim lanserima
+* odmah pravimo novu kategoričku promenljivu (postaje naša ciljna promenljiva) koja je binarna (uzima 0 ako je lanser fiksan i 1 ako nije, dakle poznate su nam njene stvarne vrednosti) i pogađamo njene vrednosti, dakle direktno da li je lanser fiksan ili pokretan
+
+Radi lakše implementacije, opredelićemo se za drugi pristup, binarnu klasifikaciju.
+
+<br>
+
+### Ciljna promenljiva
+
+Na gore objašnjen način prvo formiramo novo obeležje koje ćemo nazvati tip_lansiranja i koje će ujedno biti i naša ciljna promenljiva. Pretvorićemo ga u faktor kako bi njegovo značenje bilo očigledno. <br>
+Nakon toga pogledajmo našu bazu na primeru prvih 5 opservacija nakon dodavanja kolone tip_lansiranja i naravno uklanjanja nacin_lansiranja s obzirom da nam on više nije potreban (sve što želimo da znamo o lanserima je trenutno to da li su fiksni ili pokretni, a znanje o tome nam je sačuvano u varijabli tip_lansiranja). Ipak, sačuvaćemo ga u jednoj promenljivoj kako bi kasnije mogli da vratimo bazu na staro.
+
+
+```{r}
+rakete$tip_lansiranja = ifelse(rakete$nacin_lansiranja %in% c(2, 3), 0, 
+                               ifelse(rakete$nacin_lansiranja %in% c(1, 4), 1, 0))
+nacin_lansiranja_kopija = rakete$nacin_lansiranja
+rakete = rakete[ ,-8]
+kable(head(rakete, n = 5), 
+      format = "html",
+      table.attr = "style='font-size: 12px; width: 70%'")
+
+```
+
+
+Sada kada smo odlučili kako ćemo pristupiti problemu i formirali našu novu ciljnu promenljivu, treba da podelimo naše podatke pre nego što počnemo pravljenje modela za koji se odlučimo.
+
+<br>
+
+### Podela podataka
+
+
+Za razliku od prošlog zadatka, ovde ćemo podatke podeliti u 3 skupa: trening(50%), validacioni(20%) i test(30%). Za uvođenje još i validacionog skupa opredeljujemo se jer nam on omogućava lakše prepoznavanje overfittinga (što nam je ovde potrebno) kao i modifikaciju modela u tom slučaju.<br>
+
+Takođe ćemo razdvojiti prediktore i ciljnu promenljivu radi lakše organizacije i fleksibilnosti, a i ukoliko dođe do overfittinga koristićemo funkciju *"glmnet"* za koju su nam potrebni ovako razdvojeni podaci.
+
+```{r}
+validation_size = 0.2
+test_size = 0.3
+train_size = 0.5
+
+set.seed(70)
+
+train_val_idx = createDataPartition(rakete$tip_lansiranja, p = train_size + validation_size, 
+                                    list = FALSE)
+train_val_data = rakete[train_val_idx,]
+test_data = rakete[-train_val_idx,]
+
+x_train_val = train_val_data[, -10]
+y_train_val = train_val_data[, 10]
+x_test = test_data[, -10]
+y_test = test_data[, 10]
+
+set.seed(70)
+
+train_idx = createDataPartition(train_val_data$tip_lansiranja, 
+                                p = train_size/(validation_size + train_size), 
+                                list = FALSE)
+train_data = train_val_data[train_idx,]
+val_data = train_val_data[-train_idx,]
+
+x_train = train_data[,-10]
+y_train = train_data[,10]
+x_val = val_data[,-10]
+y_val = val_data[,10]
+```
+
+
+<br> 
+
+### Logistička regresija
+
+Sada konačno možemo preći na pravljenje modela za koji smo se odlučili. <br>
+
+Logistička regresija je jedan od najjednostavnijih i najkorišćenijih klasifikacionih modela. Koristimo je kada je naša ciljna promenljiva kategoričkog tipa, kao u ovom slučaju. 
+
+```{r}
+logit_model = glm(tip_lansiranja~., data = train_data, family = "binomial")
+```
+
+<br>
+
+### Da li je došlo do overfittinga?
+
+Dobijamo upozorenja da je model predvideo verovatnoće jednake 0 ili 1. To znači da je model "previše siguran u svoje odluke" i ne prepoznaje nijanse u podacima tj. previše je dobro naučio o podacima trening skupa. Zato je ovo alarm da je verovatno došlo do overfittinga (preprilagođavanja) - pojava da se nauče obrasci sa trening skupa, ali se ne ispoljavaju dobro na novim podacima. <br>
+
+Proverimo na još neki način da li je ovo zaista slučaj.
+
+Izračunaćemo tačnost modela na skupu podataka na kom je treniran (train_data) i na validacionom skupu koji nije još viđen (val_data). Koristićemo funkciju *"mean"*.
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> nećemo trenirati model na trening + validacija skupu i gledati njegove performanse na uniji treninga i validacije, pa na test skupu odvojeno da bi uočili overfitting (što bismo verovatno uspeli i tim putem). U tom slučaju bi koristili test skup da odlučimo koliko je naš model dobar ili nije, a želimo da ga sačuvamo kao konačni, neviđeni skup podataka za finalnu evaluaciju <br>
+
+
+```{r}
+train_pred = predict(logit_model, newdata = train_data, type = "response")
+train_pred = as.numeric(train_pred > 0.5)
+train_acc = mean(train_pred == train_data$tip_lansiranja)
+train_acc
+```
+
+```{r}
+val_pred = predict(logit_model, newdata = val_data, type = "response")
+val_pred = as.numeric(val_pred > 0.5)
+val_acc = mean(val_pred == val_data$tip_lansiranja)
+val_acc
+```
+
+Vidimo da je tačnost modela na skupu na kom je treniran baš 1. Iako to na prvi pogled deluje logično (model savršeno predviđa podatke jer ih je već video) to nam zapravo ne odgovara. Cilj nije bio da model savršeno nauči podatke već da ih razume, da predvodi inteligencijom a ne memorijom. Stoga je nama zapravo pouzdaniji onaj model koji ima tačnost npr. 0.9 na skupu na kom je treniran a ne 1. <br>
+
+Dodatno, model je lošijih performansi na skupu neviđenih podataka tj. na validacionom skupu i ovaj zaključak ide u prilog tezi da naš model nije dubinski razumeo podatke i njihovu vezu već ih je samo naučio napamet.<br>
+Konačno, možemo zaključiti da je došlo do overfittinga.
+<br>
+
+Zbog svega navedenog odlučujemo se da model poboljšamo koliko možemo. Rešavamo overfitting regularizacijom što često ujedno dovodi i do smanjenja overconfidence-a.
+
+<br>
+
+### Regularizacija
+
+Overfitting ćemo prebroditi regularizacijom - tehnikom za smanjenje složenosti modela. Postoje 3 tipa regularizacije (u zavisnosti od argumenta alpha):
+
+* **L1** (Lasso)
+* **L2** (Ridge) - mi ćemo je koristiti
+* **Elastic Net** (kombinacija)
+
+Važno je napomenuti da funkcija za pravljenje regularizovanog modela prima kao argument parametar regularizacije lambda. Da bi dobili što bolji model, ovaj parametar potrebno je optimizovati. Zato, umesto da pristupimo rešavanju problema overfittinga funkcijom "glmnet" (trenira model i primenjuje regularizaciju), primenićemo funkciju *"cv.glmnet"* (dodatno uključuje i unakrsnu validaciju na uniji trening skupa i validacionog skupa za pronalaženje najbolje vrednosti parametra lambda).<br>
+
+**Postupak:**
+
+1. Unakrsna validacija i optimizacija lambda (na validacionom skupu) korišćenjem funkcije "cv.glmnet" (Napomena: prosleđujemo funkciji eksplicitno opseg iz kog da traži optimalno lambda, nazvali smo ga lambdas i generisali ga kao jedan od najpoznatijih, dovoljno širokih opsega za ovaj postupak)
+2. Pravimo finalni, regularizovani model sa najboljim lambda iz 1. dela
+3. Taj model treniramo (na uniji trening i validacionog skupa)
+4. Evaluiramo model (na test skupu) 
+
+
+```{r, warning = FALSE, message = FALSE}
+library(glmnet)
+lambdas = exp(seq(-10,3, length.out = 100))
+
+regularized_model_cv_L2 = cv.glmnet(as.matrix(x_train_val), as.matrix(y_train_val), 
+                                 family="binomial", 
+                                 type.measure = "class",
+                                 standardize = FALSE,
+                                 nfolds = 10, lambda = lambdas)
+plot(regularized_model_cv_L2)
+
+```
+
+Na grafiku vidimo dve važne linije: prva nam predstavlja lambda za koje je greška (tj Binomial Deviance - metrika greške kod klasifikatora) najmanja, a druga nam predstavlja lambda sa 1 standardnom greškom.  
+
+Izabraćemo ono lambda koje minimizuje funkciju gubitka i napraviti i evaluirati naš finalni model na test skupu.
+
+```{r}
+optimal_lambda = regularized_model_cv_L2$lambda.min
+
+final_model_L2 = glmnet(x_train_val, y_train_val, 
+                        lambda = optimal_lambda, family = "binomial", standardize = FALSE)
+y_pred_reg_test = predict(final_model_L2, s = optimal_lambda, newx = as.matrix(x_test), type = "class")
+test_acc_reg = mean(y_pred_reg_test == y_test)
+test_acc_reg 
+```
+
+
+```{r}
+y_pred_reg_val = predict(final_model_L2, s = optimal_lambda, newx = as.matrix(x_val), type = "class")
+val_acc_reg = mean(y_pred_reg_val == y_val)
+c(val_acc_reg, val_acc)
+
+y_pred_reg_train = predict(final_model_L2, s = optimal_lambda, newx = as.matrix(x_train), type = "class")
+train_acc_reg = mean(y_pred_reg_train == y_train)
+c(train_acc_reg, train_acc)
+```
+
+Uspeli smo da smanjimo prilagođenost modela na skupu na kom je treniran i time smatramo da smo uspešno izvršili regularizaciju. <br>
+
+Sada kada konačno imamo naš finalni, regularizovan model, možemo pogledati šta "pogađa" koji tip lansera imaju naše rakete i to uporediti sa stvarnim vrednostima. <br>
+
+Takođe, možemo pogledati i kakve su performanse našeg modela preko nekih osnovnih metrika.
+
+
+```{r, warning = FALSE, message = FALSE}
+library("caret")
+
+conf_matrix = confusionMatrix(factor(test_data$tip_lansiranja), factor(y_pred_reg_test))
+conf_matrix
+
+library(pROC)
+
+roc_curve = roc(as.numeric(test_data$tip_lansiranja), as.numeric(y_pred_reg_test))
+plot(roc_curve, main = "Roc kriva", col = "red", lwd = 3)
+
+auc_value = auc(roc_curve)
+text(0, 0.4, paste("AUC = ", round(auc_value, 2)), col = "navy", cex = 1.5)
+
+```
+
+<br>
+
+### Dodatak - unakrsna validacija
+
+Kako tačnost na test skupu nakon evaluacije modela nije bila zadovoljavajuća (0.6), odlučili smo da primenom unakrsne validacije steknemo precizniji uvid u stvarne performanse naše regularizacije na nevidjenim podacima. Pretpostavljamo da je relativno niska početna tačnost mogla biti posledica malog broja opservacija u skupu podataka. <br>
+
+Koristićemo ugneždenu unakrsnu validaciju (nested cross-validation), pri čemu spoljašnja petlja svaki put izdvaja jedan fold kao test skup, dok se preostalih k - 1 folda koristi za trening i validaciju. Unutrašnja petlja zatim na tom trening + validacionom skupu izvodi unakrsnu validaciju pomoću funkcije *"cv.glmnet"*, kojom se bira optimalna vrednost regularizacionog parametra lambda. Performanse modela sa izabranim lambda na spoljašnjem test skupu beleže se u svakoj iteraciji, a najrealnija procena konačnih performansi dobija se kao prosečna tačnost na svim spoljašnjim test skupovima.
+
+```{r, warning = FALSE, message = FALSE}
+set.seed(123)
+
+X = as.matrix(rakete[, -10])   # pretpostavljam da je 10. kolona ciljna
+y = rakete[, 10]
+
+k_outer = 10
+outer_folds = createFolds(y, k = k_outer, list = TRUE)
+lambdas = exp(seq(-10, 3, length.out = 100))
+
+outer_accuracies = numeric(k_outer)
+
+for (i in 1:k_outer) {
+  
+  test_idx = outer_folds[[i]]
+  X_test = X[test_idx, ]
+  y_test = y[test_idx]
+  
+  X_train_val = X[-test_idx, ]
+  y_train_val = y[-test_idx]
+  
+  cv_model = cv.glmnet(X_train_val, y_train_val,
+                        family = "binomial",
+                        type.measure = "class",
+                        standardize = FALSE,
+                        nfolds =10,
+                        lambda = lambdas,
+                        alpha = 0)
+  
+  best_lambda = cv_model$lambda.min
+  
+  final_model = glmnet(X_train_val, y_train_val,
+                        family = "binomial",
+                        lambda = best_lambda,
+                        alpha = 0,
+                        standardize = FALSE)
+  
+  preds_test = predict(final_model, newx = X_test, type = "class", s = best_lambda)
+  outer_accuracies[i] = mean(preds_test == y_test)
+}
+
+mean(outer_accuracies)
+```
+
+Sada vidimo da je naša regularizacija bila uspešna - ne samo da smo prebrodili overfitting već model dobijen istom ima sasvim solidne performanse.
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> još jednom naglašavamo da je unakrsna validacija korišćena isključivo za dobijanje realnije procene performansi regularizovanog modela, uz maksimalno iskorišćenje dostupnih opservacija. Ona nije služila za dobijanje konačnog modela — u praktičnoj primeni koristili bismo inicijalni model sa nešto nižom tačnošću. Međutim, unakrsna validacija nam je pokazala da je zbog ograničenog broja opservacija prvobitno izmerena tačnost bila „lažno niska“ <br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> nećemo se sada detaljno baviti metrikama dobijenim unakrsnom validacijom, dovoljno nam je bilo da znamo da je naš model zadovoljavajući (ako bi hteli morali bi u svakoj iteraciji unutrašnje petlje zabeležiti i sve metrike dobijene na trenutnom test skupu, izračunati i njihovu srednju vrednost, pa prikazati takve) <br>
+
+<br>
+
+Sada ćemo izbaciti prediktor koji smo sami pravili, tip_lansiranja i vratiti prediktor način_lansiranja. Vraćamo bazu na staro jer nam nije više potrebna modifikovana pri rešavanju novih problema.
+
+
+```{r}
+rakete = subset(rakete, select = -c(tip_lansiranja))
+rakete$nacin_lansiranja = nacin_lansiranja_kopija
+```
+
+<br>
+
+## **Peti zadatak**(klasterizacija)
+
+U petom zdatku treba izbaciti sve rakete srednjeg dometa kao i prediktore max_domet i klasa_po_dometu, a zatim bez ikakvog znanja o daljem dometu raketa (sem što znamo da sada imamo samo one kratkog i dugog dometa) izvršiti klasterizaciju po istom.
+
+<br>
+
+### Izbacivanje raketa srednjeg dometa i prediktora max_domet i klasa_po_dometu
+
+Prediktor klasa_po_dometu uzima vrednosti S, M i L (koje smo mi kodirali redom u 1, 2 i 3). Pretpostavka je da ove vrednosti zapravo predstavljaju Small, Medium i Large domet, te da je dovoljno izbaciti iz baze rakete čije obeležje klasa_po_dometu uzima vrednost M (2 kod nas). Ipak, kako nemamo jasno utvrđen smisao ovog obeležja, možemo proveriti da li smo u pravu.<br>
+
+Proveravamo da li postoje jasne kategorije podataka tj. da li zaista sve rakete klase S imaju mali max_domet, one klase M osrednji i one klase L najveći. Koristićemo se *"anova"* testom za proveru.
+
+* H0: Nema razlike u srednjim vrednostima zavisne varijable (max_domet) između grupa.
+* H1: Postoji barem jedna grupa sa srednjom vrednošću koja se značajno razlikuje.
+
+
+```{r}
+anova_model = aov(max_domet_km ~ as.factor(klasa_po_dometu), data = rakete)
+summary(anova_model)
+```
+
+Kako je p-vrednost izuzetno mala, to odbacujemo nultu hipotezu i mozemo zaključiti da je mala verovatnoća da su razlike u srednjim vrednostima zavisne varijable (max_domet) između grupa nezavisne varijable (L, S, M) nastale slučajno. <br>
+
+Pogledajmo kako ovo izgleda i grafički.
+
+
+```{r}
+boxplot(max_domet_km ~ klasa_po_dometu, data = rakete,
+        main = "Distribucija max_domet_km po klasa_po_dometu",
+        xlab = "Klasa po dometu", ylab = "Max domet", col = "red")
+```
+
+Odavde se jasno vidi da SKORO sve rakete klase S imaju maksimalan domet veoma mali, one klase M srednji, a one klase L najveći. Vizuelno deluje kao da postoje neke opservacije koje mogu poremetiti naš zaključak o značenju klasa obeležja klasa_po_dometu (postoji preplitanje max_domet -a klase M i L iz klasa_po_dometu).<br>
+
+Proverimo ovo numerički.
+
+
+```{r}
+opseg_S = c(min(subset(rakete, klasa_po_dometu == 1)$max_domet), max(subset(rakete, klasa_po_dometu == 1)$max_domet))
+opseg_M = c(min(subset(rakete, klasa_po_dometu == 2)$max_domet), max(subset(rakete, klasa_po_dometu == 2)$max_domet))
+opseg_L = c(min(subset(rakete, klasa_po_dometu == 3)$max_domet), max(subset(rakete, klasa_po_dometu == 3)$max_domet))
+
+opseg_S
+opseg_M
+opseg_L
+
+sort(subset(rakete, klasa_po_dometu == 3)$max_domet)
+```
+
+<br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> prisetimo se da su ove vrednosti skalirane, mada nam to ne pravi problem pri zaključivanju jer nam nisu važne realne brojke o kojima pričamo, već samo opseg svake klase i njihovo preplitanje.<br>
+
+Dakle, pravi nam problem što postoji jedna raketa klase L ciji je max_domet -0.17085618 (što ulazi u opseg za klasu M, jer -0.17085618 < -0.07528259 što je gornja granica opsega klase M). <br>
+
+Kako postoji samo jedno odstupanje od pravila koje smo uvideli, uvažićemo ga kao ispravno i zaključiti da su rakete srednjeg dometa one koje pripadaju klasi "M" obeležja klasa_po_dometu. <br>
+
+Konačno, upravo ovakve rakete izbacujemo, a nakon toga i prediktore klasa_po_dometu i max_domet.
+
+
+```{r}
+indeksi_klasa_M = which(klasa_po_dometu == 2)
+rakete_izbaceno = rakete[-indeksi_klasa_M, ]
+rakete_izbaceno = subset(rakete_izbaceno, select = -c(max_domet_km, klasa_po_dometu))
+```
+
+<br>
+
+Dalje je plan je da podacima pristupimo na 2 načina tj. da se koristimo sa 2 tipa klasterizacije. Nakon toga ćemo ih uporediti kako bi zaključili nešto više o pravom pristupu podacima i opredelili se za bolju klasterizaciju.
+
+<br>
+
+### K - means klasterizacija
+
+#### 1. Odabir broja klastera K
+
+Prvo, treba se oprediliti za broj klastera prema kom ćemo izvršiti podelu. Naš cilj je da uočimo pravilnost u dobijenim grupama, te da zaključimo koji klaster/klasteri predstavljaju rakete kratkog, a koji dugog dometa. <br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> Zahtev za klasterizaciju prema dometu koji uzima 2 vrednosti (kratki i dugi) ne znači nužno da su nam potrebna samo 2 klastera. Moguće je da se desi da je najoptimalniji broj klastera veći i da je deo dobijenih klastera jedna "celina" koja predstavlja rakete kratkog, a drugi deo dugog dometa. Do ovoga može doći usled specifičnosti podataka ili nekih podgrupa koje postoje unutar raketa jednog određenog dometa.<br>
+
+Postoji nekoliko metoda za odabir broja K:
+
+* **Elbow metoda** <br>
+Y - osa: suma kvadrata unutar klastera - "WCSS" (pokazuje koliko su podaci kompaktni unutar klastera za svako K)<br>
+Odabir K: Mesto gde se kriva "lomi" (smanjenje WCSS se usporava) tj. dodavanje više klastera prestaje da značajno smanjuje WCSS
+* **Silhouette analiza** <br>
+Y - osa: Silhouette koeficijent koji ocenjuje koliko su klasteri kompaktni i razdvojeni<br>
+Odabir K: što veći koeficijent, ako je više K sličnih vrednosti koeficijenata, izabrati najmanje radi jednostavnosti
+* **Gap Statistic** <br>
+Y - osa: Gap vrednost (razlika između WCSS za stvarne i nasumične podatke), pokazuje značajnost klasterizacije<br>
+Odabir K: Prvo K za koje vrednost naglo poraste i postaje stabilna
+
+<br>
+
+#### 2. K - means algoritam
+
+Najbolji broj klastera K biraćemo jednom od navedenih metoda pa neka to bude i najpoznatija - Elbow metoda. Koristićemo se sa dva algoritma klasterizacije i odabrati nama intuitivniji. Za početak će to biti K - means algoritam.<br>
+
+K - means algoritam funkcioniše tako što se prvo (nasumično) odabere K centara klastera ("centroida"). Zatim se svaka opservacija dodeljuje klasteru čijoj je centroidi najbliža. Tada se računa centar novodobijenog klastera i u njega se premešta centroida.
+
+
+```{r, warning = FALSE, message = FALSE}
+library(factoextra)
+library(cluster)
+library(gridExtra)
+
+elbow_plot = fviz_nbclust(rakete_izbaceno, kmeans, method = "wss") + 
+  ggtitle("Elbow metoda - Odabir K")
+
+elbow_plot
+```
+
+Za K = 3 kriva se "lomi" te je to lakat koji smo tražili. Za K = 8 dolazi do blagog skoka, ali ovo nije ništa značajno što može da poremeti naš zaključak već je najverovatnije samo posledica specifičnosti nekog podatka. <br>
+
+
+```{r}
+set.seed(42)
+
+final_model_cluster_kmeans = kmeans(rakete_izbaceno, centers = 3, nstart = 10)
+
+# dodeljeni klasteri svakoj opservaciji
+clusters_kmeans = final_model_cluster_kmeans$cluster
+clusters_kmeans
+
+# prikaz koliko opservacija je svrstano u svaki od 3 klastera koje imamo
+table(clusters_kmeans)
+```
+
+<br>
+
+### Hierarchical Clustering
+
+Hijerarhijsko klasterovanje je dobar alat za proveru i dodatno razumevanje strukture podataka. Gradi se "stablo" klastera (dendogram). Svaka iteracija počinje kao zaseban klaster, a zatim se iterativno spajaju najbliži klasteri dok ne ostane jedan najveći. Ovo možemo prikazati i vizuelno.
+
+
+```{r}
+hc_result = hclust(dist(rakete_izbaceno), method = "ward.D2")
+plot(hc_result, main = "Dendrogram", sub = "", xlab = "Opservacije", ylab = "Udaljenost")
+```
+<br>
+
+Sada treba izabrati broj klastera K. Vizuelno uočavamo da postoje tri jasne grupe na dendogramu (tri jasne "grane") pa pogledajmo kako izgleda dendogram ako bi broj klastera bio isti kao za K - means tj. K = 3. Na grafiku crvene granice pedstavljaju tri krajnja klastera koja smo zapravo i tražili. Nakon vizuelizacije, možemo se poslužiti i "elbow" metodom radi provere.
+
+
+```{r}
+plot(hc_result, main = "Dendrogram", sub = "", xlab = "Opservacije", ylab = "Udaljenost")
+rect.hclust(hc_result, k = 3, border = "darkred")
+fviz_nbclust(rakete_izbaceno, FUN = hcut, method = "wss")
+```
+
+<br>
+
+"Elbow" metoda nam potvrđuje da je naš vizuelni zaključak bio ispravan jer je lakat ponovo na K = 3. <br>
+
+Kao i kod K - means metode, vršimo ponovo podelu na 3 klastera i možemo pogledati koja opservacija pripada kom.
+
+
+```{r}
+clusters_hc = cutree(hc_result, k = 3)
+
+#dodeljeni klasteri svakoj opservaciji
+clusters_hc
+
+# prikaz koliko opservacija je svrstano u svaki od 3 klastera koje imamo
+table(clusters_hc)
+```
+
+<br>
+
+### Poređenje klasterizacija
+
+Sada kada znamo kom klasteru je dodeljena koja opservacija putem K - means i Hierarchical algoritma, možemo uporediti rezultate. <br>
+
+Pošto algoritmi klasterizacije nemaju "pravu" ciljnu varijablu ne možemo koristiti standardne metrike. Umesto toga koristićemo funkciju "silhouette" koja računa Silhouette score koji nam pokazuje koliko su objekti unutar klastera slični, a različiti od objekata u drugim klasterima. Ova mera uzima vrednosti od -1 do 1. Rezultat blizu 1 označava da je tačka dobro uklopljena u svoj klaster, rezultat blizu 0 da je na granici i rezultat blizu -1 da je tačka loše pozicionirana. Nakon što izračunamo srednju vrednost svih rezultata dobijamo procenu. 
+
+```{r}
+library(cluster)
+sil_kmeans <- silhouette(clusters_kmeans, dist(rakete_izbaceno))
+sil_hclust <- silhouette(clusters_hc, dist(rakete_izbaceno))
+
+mean(sil_kmeans[, 3])
+mean(sil_hclust[, 3])
+```
+
+Vidimo da su obe klasterizacije bile uspešne (rezultati oko 0.5 su solidno dobri), kao i da su gotovo jednako dobre. Prema ličnoj preferenci i boljem intuitivnom shvatanju izabraću Hijerarhijsko klasterovanje za dalji rad.
+
+<br>
+
+### Da li možemo da zaključimo nešto o podeli raketa na kratak i dug domet?
+
+Jasno, nama ništa ne garantuje da smo uspeli da dođemo do bilo kakve jasne podele na rakete prema njihovom dometu, koji je sve vreme nepoznat. Klasterizacija se koristila sličnostima i razlikama između raketa prema njihovim ostalim, poznatim obeležjima. Ono što mi intuitivno znamo jeste da ostala obeležja utiču i na domet raketa. Npr. ukoliko uvidimo jasno da su u nekim od 3 klastera koja imamo isključivo rakete slične po masi i dužini, recimo velike mase i dužine, to će nam omogućiti da neformalno zaključimo da upravo ovi klasteri predstavljaju ujedno i rakete dugog dometa (jer nam je jasno da baš takve rakete imaju dug domet). Na taj način nam homogenost klastera prema ostalim karakteristikama kao i njihova međusobna različitost omogućuju da zaključimo da svaki klaster predstavlja jedan "tip" raketa i da se najverovatnije ti tipovi odnose i na njihov domet (kratak ili dug, u zavisnost od vrednosti ostalih obeležja povezanih sa dometom).
+
+<br>
+
+Kako poznata obeležja utiču na domet (intuitivno shvatanje):
+
+* masa - veće (teže) rakete imaju veći domet jer mogu nositi jače motore i više goriva (ZNAČAJAN UTICAJ)
+* dužina - kao i za masu, duže rakete imaju veći domet (ZNAČAJAN UTICAJ)
+* kalibar - povezan je sa veličinom motora, pa veći kalibar znači i veći domet (ZNAČAJAN UTICAJ)
+* tip goriva - rakete sa tečnim gorivom imaju veći domet jer su efikasnije u korišćenju energije (SREDNJI UTICAJ)
+* način lansiranja - nije presudan (MALI UTICAJ)
+* payload (korisni teret) - veća težina tereta smanjuje kapacitet za gorivo pa smanjuje domet (SREDNJI UTICAJ)
+* broj podlgava - rakete sa više glava imaju veću stabilnost pa i domet (SREDNJI UTICAJ)
+* broj faza motora - višefazni motori povećavaju brzinu i efikasnost raketa pa i domet (SREDNJI UTICAJ) <br>
+
+Sada ćemo grafički prikazati rakete po 2 atributa, kako bi uvideli pravilnost u podeli na klastere i zaključili nešto više o dometu.<br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> Prikazaćemo i legendu koja nam pokazuje koji od gore dodeljenih brojeva klastera (1,2,3) označava koju boju. Radi jednostavnosti koda uradićemo to samo prvi put, znajući da isto važi i za svaki naredni grafik.
+
+```{r}
+clusters_hc_colors = as.factor(clusters_hc)
+
+plot(rakete_izbaceno$masa_kg, rakete_izbaceno$duzina_m, 
+     pch = 16, cex = 1.5, col = clusters_hc_colors)
+
+colors_assigned = levels(clusters_hc_colors)
+
+legend(x = 2.3, y = 0.3, 
+       legend = paste("Klaster", 1:length(colors_assigned)), 
+       fill = colors_assigned, 
+       title = "Klasteri", 
+       xpd = TRUE)
+
+```
+
+
+Svaka boja predstavlja jedan klaster (u legendi vidimo i koja koji), a svaka tačka jednu opservaciju. Vidimo da su opservacije prilično pravilno raspodeljene po klasterima u smislu njihove mase i dužine - rakete najmanje mase i dužine čine jedan klaster i tako redom. 
+
+<br>
+
+```{r}
+plot(rakete_izbaceno$masa_kg, rakete_izbaceno$tip_goriva, 
+     pch = 16, cex = 1.5, col = clusters_hc)
+```
+
+
+Setimo se da na prethodnom grafiku, tačke crne boje bile su rakete velike masei dužine. Sada vidimo da isti klaster (zovimo ga "Crni klaster") karakteriše i čvrsto gorivo (omogućava veći domet). Možemo zaključiti da Crni klaster predstavlja rakete dugog dometa. Što se tiče druga dva klastera ("Zeleni klaster" i "Roze klaster") ne oučavamo jasnu pravilnost prema tipu goriva (algoritam ih je "sekao" prema masi). <br> 
+
+Zato pogledajmo još jedan grafik klasterizacije prema 2 atributa.
+
+<br>
+
+
+```{r}
+plot(rakete_izbaceno$duzina_m, rakete_izbaceno$kalibar_m, 
+     pch = 16, cex = 1.5, col = clusters_hc)
+```
+
+Još jednom potvrđujemo da Crni klaster predstavlja rakete dugog dometa (rakete velike mase, dužine, kalibra i sa čvrstim gorivom). Vidimo da Zeleni klaster karakterišu rakete male mase, dužine i kalibra (setimo se da za tip goriva nismo uvideli jasnu pravilnost), te možemo zaključiti da on predstavlja rakete kratkog dometa. 
+
+<br>
+
+Šta da zaključimo o Roze klasteru? <br>
+U ovom klasteru nalaze se rakete osrednje mase, dužine i kalibra (o tipu goriva nismo zaključili ništa) od raketa koje su ostale u bazi nakon izbacivanja raketa srednjeg dometa. <br>
+
+Za početak pogledajmo koje su to rakete u Roze klasteru (prisetimo se legende sa prvog grafika: Roze klaster je zapravo klaster br. 2).
+
+```{r}
+#koristimo početnu bazu jer smo samo u njoj sačuvali nazive raketa
+rakete_izbaceno_pocetna_baza = rakete_pocetna_baza[!rakete_pocetna_baza$klasa_po_dometu == "M", ]
+
+rakete_izbaceno_pocetna_baza[clusters_hc == 2, "NATO_ime"]
+```
+
+
+Vidimo da su nam u Roze klasteru pretežno sovjetske/ruske rakete (čak 11 njih, a svega 3 kineske). Stoga možemo zaključiti da nam i Roze klaster, kao i Crni, predstavlja rakete dugog dometa, a Zeleni rakete kratkog dometa.<br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> **prethodni zaključak biće detaljno objašnjen pred kraj 6. zadatka, kada se detaljnije uputimo u istoriju razvoja raketa i opravdamo zaključak da je klaster pretežno sovjetskih raketa najverovatnije klaster raketa dugog dometa** <br>
+
+Takođe, u cilju donošenja (neformalnog) zaključka, možemo pogledati i masu raketa u Roze klasteru.<br>
+
+Dizajn raketa i njihov domet zavise od mnogo faktora, ali masa je definitivno veoma bitno obeležje koje utiče na domet raketa. Prema nezvaničnim podacima (dolazi često do preklapanja brojki, ali može se uhvatiti neka pravilnost) rakete dugog dometa obično teže između 30000 i 120000 kilograma, dok su one kratkog dometa između 1000 i 8000 kilograma.
+
+```{r}
+rakete_izbaceno_pocetna_baza[clusters_hc == 2, "masa_kg"]
+```
+
+Vidimo da gotovo sve rakete iz Roze klastera teže preko 30000 kg. Ovaj podatak nam ide u prilog prethodnom zaključku o tome da se u ovom klasteru nalaze rakete dugog dometa. Naravno, dolazi do nekih odstupanja, ali to smo mogli i očekivati s obzirom na to smo znali da ovakva klasterizacija ne može savršeno podeliti rakete prema njihovom dometu kao nepoznatom obeležju.
+
+<br>
+
+## **Šesti zadatak**
+
+U poslednjem zadatku cilj nam je da razumemo naše podatke i pojmove koji se korite u njima na još neki način pored matematičkog. Primarni pristup biće istorijski i politički. Posebno ćemo, kako zadatak i nalaže, istražiti koliko se često javljaju rakete srednjeg dometa, koje su one starosti, kome pripadaju i zašto. <br>
+
+Prisetimo se kako je izgledala naša baza na samom početku (na primeru prvih 5 opservacija).
+
+```{r}
+kable(head(rakete_pocetna_baza, n = 5), 
+      format = "html", 
+      table.attr = "style='font-size: 12px; width: 70%'"
+)
+```
+
+<br>
+
+### Zemlje porekla raketa srednjeg dometa, godine proizvodnje
+
+
+Dakle naš rad se bazirao ne raketama kojima znamo rusko ime i NATO ime. Međutim, nemamo eksplicitno naveden podatak u vlasništvu koje sile je svaka od njih. Ono što možemo da uradimo je da pogledamo NATO imena naših raketa.
+
+```{r}
+kable(rakete_pocetna_baza[,2], 
+      format = "html",
+      table.attr = "style='font-size: 15px; width: 70%'")
+```
+
+Zašto gledamo baš NATO ime raketa?<br>
+Možemo uočiti da su NATO imena raketa kodna, tačnije sva imena počinju ili prefiksom SS- ili CSS- (izuzev dve rakete koje ćemo istražiti odvojeno a to su, prema NATO imenu, "Dagger" i "Guam Killer").<br>
+NATO je sovjetske/ruske rakete imenovao prefiksom SS- (Surface-to-Surface), a kineske sa CSS- (Chinese Surface-to-Surface). Postojali su i drugi prefeksi NATO kodnog imenovanja, ali nam trenutno nisu od ključnog značaja. Izuzeci u NATO imenovanju su određene rakete čiji nazivi označavaju neke njihove posebne karakteristke ili su jednostavno nastala zbog medijskog interesa. Tako, imamo rusku raketu "Dagger" (jedna od najmodernijih oružja ruske vojske) i kinesku "Guam Killer" (poznata po dometu taman dovoljnom za gađanje američke baze na ostrvu Guam).
+
+<br>
+
+Prvo, dodajmo u našu bazu podataka još jedno obeležje koje će nam pomoći u daljem radu, a to je sila kojoj svaka raketa pripada (to ćemo uraditi prema gore objašnjenim NATO kodnim imenima). Ostavljamo prostora da postoje neke rakete pored "Dagger" i "Guam Killer" koje ne počinju sa SS- ili CSS-, a nismo ih uvideli (dodavanjem difoltne vrednosti "Nepoznato"). <br>
+Zatim, želimo da vidimo koliko ima ruskih, a koliko kineskih, raketa srednjeg dometa (one koje za klasa_po_dometu uzimaju vrednost "M", što znamo iz prethodnog zadatka) i koje su to rakete, kako bi istražili kada su pravljene.
+
+```{r, warning = FALSE, message = FALSE}
+library(dplyr)
+
+rakete_pocetna_baza = rakete_pocetna_baza %>%
+  mutate(
+    zemlja = case_when(
+      grepl("^SS-", NATO_ime) ~ "Rusija",
+      grepl("^CSS-", NATO_ime) ~ "Kina",
+      NATO_ime == "Dagger" ~ "Rusija",
+      NATO_ime == "Guam Killer (unofficial)" ~ "Kina",
+      TRUE ~ "Nepoznato"
+    )
+  )
+
+rakete_rusija_m = rakete_pocetna_baza %>%
+  filter(zemlja == "Rusija", klasa_po_dometu == "M")
+
+rakete_kina_m = rakete_pocetna_baza %>%
+  filter(zemlja == "Kina", klasa_po_dometu == "M")
+
+kable(rakete_rusija_m$NATO_ime, 
+      format = "html", 
+      table.attr = "style='font-size: 12px; width: 70%'"
+)
+
+```
+
+
+<br>
+
+```{r}
+kable(rakete_kina_m$NATO_ime, 
+      format = "html", 
+      table.attr = "style='font-size: 12px; width: 70%'"
+)
+```
+
+
+Pogledajmo sada kada su proizvedene sve ove rakete. <br>
+
+<span style="color:darkblue;"> **NAPOMENA:** </span> Imamo dve kineske rakete CSS-5 ali one nisu iste već je samo njihovo NATO ime isto (to su rakete Dong Feng 21 i Dong Feng 4, redom, prema ruskom imenu)
+
+
+**1. Dagger (R)** - 2018 <br>
+**2. SS-N-6 Serb (R)** - 1960-1961 <br>
+**3. SS-20 Saber (R)** - 1976-1979 <br>
+**4. SS-1D Scud C (R)** - 1970-1972 <br>
+**5. SS-1E Scud D (R)** - 1976-1979 <br>
+
+<br>
+
+**6. CSS-6 (K)** - 1990 <br>
+**7. CSS-11 (K)** - 1970 - 1971 <br>
+**8. CSS-5 (K)** - 1985 <br>
+**9. Guam Killer (K)** - 2010 - 2015 (nezvanično) <br>
+**10. CSS-5 (K)** - 1975 <br>
+
+Vidimo da ne postoji nijedna ruska raketa srednjeg dometa proizvedena u periodu 1988-2018. Ovo nije slučaj kod kineskih raketa. Razmotrimo zašto.
+
+<br>
+
+### Reagan - Gorbačev (INF sporazum)
+
+1970-ih godina Sovjetski Savez je stavio u upotrebu raketu SS-20 Saber koju smo već pominjali. Ovo je bila raketa srednjeg dometa koja je lako mogla da pogodi Zapadnu Evropu sa sovjetskih teritorija, što je predstavljalo veliki izazov za NATO jer je povećalo nuklearnu pretnju.<br>
+
+Zato je NATO, pod uticajem Nemačke, doneo 1979. "Double Track Decision" što uključuje: <br>
+
+* uklanjaje 1000 nuklearnih bojevih glava (ekplozivni uređaj na vrhu rakete zadužen za uništenje na cilju) iz Evrope
+* ako pregovori sa Sovjetskim Savezom ne uspeju, modernizacija i povećanje nuklearnih snaga NATO-a
+
+
+Upravo je ova strategija i zabrinutost zbog velikog sovjetskog i kineskog nuklearnog rasta bila preduslov za INF sporazum potpisan 1987. između SAD-a (Ronald Reagan) i Sovjetskog Saveza (Mikhail Gorbachev). <br>
+
+<img src="https://gdb.voanews.com/f42ec7c0-befe-4e72-9256-4a4942a7bd46_cx0_cy8_cw0_w1080_h608.jpg" alt="Potpisivanje INF - a" width="500"/>
+
+Sporazum je strogo zabranio proivodnju i raspoređivanje raketa srednjeg dometa, čime su SAD i Sovjetski Savez ukinuli ovu pretnju i smanjili mogućnost nuklearnog sukoba u Evropi. Bio je značajan korak ka smanjenju napetosti u Hladnom ratu i stabilizaciji evropske sigurnosti, kao i smanjenju nuklearne opasnosti u svetu. Time je Sovjetski Savez bio u obavezi da sve postojeće rakete srednjeg dometa uništi i da ne proizvodi nove.<br>
+
+Za razliku od njih, Kina nije bila potpisnica i time nije bila deo ovog sporazuma. Nije bila ni u kakvoj obavezi. Kina je za to vreme usavršavala i povećala proivodnju raketa srednjeg dometa i tako stekla stratešku prednost, pogotovo u kontekstu njenog rastućeg uticaja u Aziji.
+
+<br>
+
+### Bolton - Šoigu (sastanak 2018.)
+
+
+Uprkos svim dogovorima, već od 2014. godine SAD optužuju Rusiju da krši INF sporazum. Naime, sporazum je zabranjivao  isključivo kopnene balističke i krstareće rakete srednjeg dometa i nije se odnosio na vazdušne i pomorske. Prema našim podacima to bi značilo da su zabranjene sve rakete srednjeg dometa koje za tip_lansiranja uzimaju "Silos" ili "RM TEL", ali ne i one koje uzimaju "Mornarički" i "Avion". Na taj način Rusija je uspevala da doskoči INF sporazumu tako što je ipak proizvodila rakete srednjeg dometa koje su predstavljale pretnju, ali bez formalnog kršenja sporazuma. <br>
+
+Npr. raketa "Dagger" o kojoj je već bilo reči je prvi put javno predstavljena u martu 2018. ali je već krajem 2017. godine ušla u operativnu upotrebu. U pitanju je raketa srednjeg dometa koja bi bila zabranjena sporazumom da je lansirana sa kopna, ali je Rusija formalno kršenje istog preduhitrila tako što je "Dagger" raketa lanisirana sa aviona te nije pod INF zabranom. <br>
+
+Pored ovakvih doskočica Rusije postojao i konkretan problem, a to je bila SSC-8 (surface-to-Surface Cruise) raketa koju nemamo u bazi. U pitanju je kopnena krstareća raketa koja bi kao takva bila zabranjena INF-om ako bi bila srednjeg dometa. Problem je nastao jer su SAD tvrdile da je domet rakete SSC-8 2500km, a Rusija da ne prelazi 480km (ali nisu pružili dovoljno dokaza za ovu tvrdnju). Dodatno, Rusija je imala i altrenativu. To je bila raketa "Kalibr" koju takođe nemamo u bazi, a koja je preteča rakete SSC-8 samo što joj je lanser sa mornarice. Tako je izgledalo kao da Rsuija pronalazi "rupu" u INF sporazumu kako bi uspela da proizvede kopnenu krstareću raketu srednjeg dometa (SSC-8). <br>
+
+Zbog svega navedenog, u oktobru 2018. tadašnji američki savetnik za nacionalnu bezbednost J.Bolton sastao se sa ruskim ministrom odbrane S.Soigu i drugim zvaničnicima u Moskvi. Tema sastanka bila je INF sporazum, a Bolton je jasno preneo američku nameru da se povuče iz tog sporazuma, upravo zbog navodnog ruskog kršenja. Neposredno nakon toga, 20. oktobra 2018. je Donald Trump najavio zvanično povlačenje SAD iz INF sporazuma. Dodao je kao razlog i to što Kina (koja, podsetimo se, nije bila ograničena sporazumom) postaje ozbiljna pretnja američkim interisima na Pacifiku. <br>
+
+Konačno, 1. februara 2019. SAD su zvanično suspendovale svoje obaveze prema INF-u, a Rusija je učinila isto već dan kasnije. Do avgusta 2019. sporazum je u potpunosti prestao da važi. I SAD i Rusija ponovo su započe proizvodnju raketa srednjeg dometa svih tipova lansera. 
+
+<br>
+
+### Objašnjenje zaključka u prethodnom zadatku
+
+
+Sada kada znamo više o istoriji razvoja raketa možemo bolje opravdati zaključak da je Roze klaster u 5. zadatku predstavljao rakete dugog, a ne kratkog dometa. Naime, još tada smo uvideli da se on sastoji pretežno od sovjetskih/ruskih raketa. Prisetimo se da smo u tom zadatku radili nad bazom u kojoj su bile izbačene sve rakete srednjeg dometa. Sada kada znamo da je Sovjetski Savez dugo imao zabranu proizvodnje raketa srednjeg dometa (tokom važenja INF sporazuma), možemo se osloniti na činjenicu da su u tom periodu proizvodili mnogo više raketa dugog dometa koje su imale bolje i značajnije performanse od onih kratkog dometa. <br>
+
+Za razliku od Kine koja je razvijala i rakete kratkog dometa (jer je bila fokusirana na regionalne sukobe u Pacifiku i jugoistočnoj Aziji), Rusija je više težila nečemu drugačijem. Cilj im je bio održavanje vojne moći sa SAD-om (to su postizali raketama dugog dometa jer su tako mogli da pokriju velike geografske udaljenosti) i nuklearno odvraćanje od napada (rakete dugog dometa bile su osnovni element ruske nuklearne strategije).<br>
+
+Takođe, Rusija je generalno kroz istoriju proizvodila više raketa dugog dometa (i pre INF sporazuma) u skladu sa njihovom strategijom i potrebama za nuklearnim odvraćanjem i globalnom dominacijom.<br>
+
+Stoga, veća brojnost ruskih raketa u Roze klasteru daje nam podlogu da (neformalno) zaključimo da se radi o raketama dugog dometa.
