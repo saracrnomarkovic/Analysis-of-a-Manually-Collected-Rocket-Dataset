@@ -1,2 +1,21 @@
-# Analysis-of-a-Manually-Collected-Rocket-Dataset
-Applied ML algorithms in RStudio on a rocket dataset: regression, SVM, random forest, KNN, clustering (K-means, hierarchical), with cross-validation, regularization, and evaluation (confusion matrix, ROC).
+# 🚀 Rocket Dataset Analysis
+
+## 📌 Project Overview
+This project analyzes a manually collected dataset of rockets and explores the relationship between their characteristics and maximum range.
+
+## 📂 Files
+- SS3SeminarskiFinal.html – complete analysis report with explanations and visualizations
+- SS3SeminarskiFinal.Rmd – RMarkdown file with code and explanations
+- rakete.ods – dataset used in the analysis
+
+## ⚙️ Methodology
+- Data preprocessing
+- Exploratory Data Analysis (EDA)
+- Statistical modeling
+- Interpretation of results
+
+## 📈 Results
+The analysis identifies key factors that influence rocket range and demonstrates how data can be used for predictive modeling.
+
+## 🧠 Goal
+The goal of this project is to demonstrate practical data science skills using R on a real-world dataset.
